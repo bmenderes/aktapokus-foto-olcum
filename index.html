@@ -1,0 +1,169 @@
+﻿<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Foto Olcum</title>
+<style>
+:root{--bg:#fafaf7;--fg:#1c1c1a;--mut:#6b6b66;--line:#d8d8d0;--acc:#f5c400}
+@media (prefers-color-scheme:dark){:root{--bg:#1b1b19;--fg:#ececE6;--mut:#a0a09a;--line:#3a3a36}}
+*{box-sizing:border-box}
+body{margin:0;padding:16px;background:var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif;max-width:720px;margin-inline:auto}
+h1{font-size:20px;margin:0 0 12px}
+.kart{border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:12px}
+label{display:block;font-size:14px;color:var(--mut);margin:8px 0 4px}
+input[type=number],select{width:100%;padding:10px;font-size:16px;border:1px solid var(--line);border-radius:8px;background:transparent;color:var(--fg)}
+input[type=file]{width:100%;font-size:15px}
+canvas{width:100%;height:auto;border-radius:8px;margin-top:8px;display:none;background:#000}
+button{padding:12px 18px;font-size:16px;border:0;border-radius:999px;background:var(--acc);color:#1c1c1a;font-weight:600;width:100%}
+.sonuc{font-size:22px;font-weight:600;margin:4px 0}
+.mut{color:var(--mut);font-size:14px}
+.uyari{color:#c0392b;font-size:14px;margin-top:6px}
+</style>
+</head>
+<body>
+<h1>Foto Olcum</h1>
+
+<div class="kart">
+  <label>Referans nesnenin uzun kenari (mm)</label>
+  <input id="refmm" type="number" step="0.01" value="85.60">
+  <label>Referans nesne fotografta nerede?</label>
+  <select id="refyer"><option value="sol">Solda</option><option value="sag">Sagda</option></select>
+  <label>Nesne rengi</label>
+  <select id="renk"><option value="acik">Acik nesne, koyu zemin (masa + aluminyum)</option><option value="koyu">Koyu nesne, acik zemin</option></select>
+  <div class="mut">Referans ve olculecek nesne ayni duzlemde, yan yana, zemine gore net kontrastli olmali.</div>
+</div>
+
+<div class="kart">
+  <label>Foto 1 olcek kaynagi</label>
+  <select id="olcekkaynak"><option value="masa">Masa isaretleri (4 kose, perspektif duzeltmeli)</option><option value="ref">Referans nesne (yukaridaki)</option></select>
+  <label>Masa: sol-sag isaret merkezleri arasi (mm)</label>
+  <input id="masagen" type="number" step="0.1" value="1400">
+  <label>Masa: ust-alt isaret merkezleri arasi (mm)</label>
+  <input id="masayuk" type="number" step="0.1" value="900">
+  <div class="mut">Masanin 4 kosesine kare, acik renkli isaret (yaklasik 50 mm) yapistirin; masa zemini koyu olsun. Foto 1de 4 isaret de gorunmeli, masanin uzun kenari yataya yakin olmali. Birden fazla parca ayni karede olculebilir.</div>
+</div>
+
+<div class="kart">
+  <b>1. Foto: ustten (X ve Y)</b>
+  <input id="f1" type="file" accept="image/*">
+  <canvas id="c1"></canvas>
+  <div class="mut" id="b1"></div>
+</div>
+
+<div class="kart">
+  <b>2. Foto: yandan (Z)</b>
+  <input id="f2" type="file" accept="image/*">
+  <canvas id="c2"></canvas>
+  <div class="mut" id="b2"></div>
+</div>
+
+<button id="hesapla">Olc</button>
+
+<div class="kart" id="sonuc" style="margin-top:12px;display:none"></div>
+
+<script src="olcum.js"></script>
+<script>
+const $ = s => document.querySelector(s);
+const durum = { 1: null, 2: null };
+
+async function yukle(dosya) {
+  const bmp = await createImageBitmap(dosya);
+  const c = document.createElement('canvas');
+  c.width = bmp.width; c.height = bmp.height;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(bmp, 0, 0);
+  const px = g.getImageData(0, 0, c.width, c.height).data;
+  const gri = new Uint8Array(c.width * c.height);
+  for (let i = 0, j = 0; i < gri.length; i++, j += 4) gri[i] = (px[j] * 299 + px[j + 1] * 587 + px[j + 2] * 114) / 1000;
+  return { bmp, gri, w: c.width, h: c.height };
+}
+
+function ciz(no, foto, r, renk) {
+  const c = $('#c' + no);
+  c.width = foto.w; c.height = foto.h; c.style.display = 'block';
+  const g = c.getContext('2d');
+  g.drawImage(foto.bmp, 0, 0);
+  g.lineWidth = Math.max(2, foto.w / 400);
+  for (const n of r.nesneler) {
+    g.strokeStyle = renk(n);
+    g.beginPath();
+    n.kose.forEach((k, i) => i ? g.lineTo(k[0], k[1]) : g.moveTo(k[0], k[1]));
+    g.closePath(); g.stroke();
+  }
+}
+
+function analizEt(foto) {
+  return Olcum.analiz(foto.gri, foto.w, foto.h, { acikNesne: $('#renk').value === 'acik' });
+}
+
+$('#olcekkaynak').onchange = () => { if ($('#olcekkaynak').value === 'masa') $('#renk').value = 'acik'; };
+for (const no of [1, 2]) {
+  $('#f' + no).onchange = async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    $('#b' + no).textContent = 'Yukleniyor...';
+    durum[no] = await yukle(f);
+    $('#b' + no).textContent = durum[no].w + ' x ' + durum[no].h + ' px';
+  };
+}
+
+$('#hesapla').onclick = () => {
+  const refmm = parseFloat($('#refmm').value), solda = $('#refyer').value === 'sol';
+  const s = $('#sonuc'); s.style.display = 'block';
+  if (!(refmm > 0)) { s.innerHTML = '<div class="uyari">Referans uzunlugu girin.</div>'; return; }
+  if (!durum[1] || !durum[2]) { s.innerHTML = '<div class="uyari">Iki fotografi da secin.</div>'; return; }
+  const masaModu = $('#olcekkaynak').value === 'masa', masaGen = parseFloat($('#masagen').value), masaYuk = parseFloat($('#masayuk').value);
+  if (masaModu && !(masaGen > 0 && masaYuk > 0)) { s.innerHTML = '<div class="uyari">Masa olculerini girin.</div>'; return; }
+  const sonuc = {}, uyarilar = [];
+  let masaParcalar = null;
+  for (const no of [1, 2]) {
+    const r = analizEt(durum[no]);
+    if (no === 1 && masaModu) {
+      const m = Olcum.masaOlc(r, masaGen, masaYuk);
+      if (m.hata) { uyarilar.push('1. foto: ' + m.hata); continue; }
+      ciz(1, durum[1], r, n => m.isaret.includes(n) ? '#2e86de' : '#27ae60');
+      masaParcalar = m.parcalar.slice().sort((a, b) => a.mx - b.mx);
+      $('#b1').textContent = durum[1].w + ' x ' + durum[1].h + ' px | esik ' + r.esik + ' | ' + m.parcalar.length + ' parca bulundu';
+      if (!masaParcalar.length) uyarilar.push('1. fotografta masa isaretlerinden baska nesne bulunamadi.');
+      continue;
+    }
+    const rn = Olcum.referansVeNesne(r.nesneler, solda);
+    if (!rn) { uyarilar.push(no + '. fotografta referans ve nesne birlikte bulunamadi (kontrast, renk ayari).'); continue; }
+    ciz(no, durum[no], r, n => n === rn.ref ? '#2e86de' : n === rn.nesne ? '#27ae60' : '#999');
+    const olcek = refmm / rn.ref.uzun;
+    sonuc[no] = { olcek, nesne: rn.nesne, ref: rn.ref };
+    $('#b' + no).textContent = durum[no].w + ' x ' + durum[no].h + ' px | esik ' + r.esik + ' | ' + olcek.toFixed(4) + ' mm/px | referans doluluk %' + (rn.ref.doluluk * 100).toFixed(1);
+    if (rn.ref.doluluk < 0.95) uyarilar.push(no + '. fotografta referans dikdortgen gorunmuyor; dogruluk dusebilir.');
+  }
+  let html = '';
+  const xy = [];
+  if (masaParcalar) {
+    masaParcalar.forEach((p, i) => {
+      xy.push([p.uzun, p.kisa]);
+      html += '<div class="sonuc">Parca ' + (i + 1) + ': X = ' + p.uzun.toFixed(2) + ' mm, Y = ' + p.kisa.toFixed(2) + ' mm</div>' +
+        '<div class="mut">Cozunurluk ' + p.mmPx.toFixed(3) + ' mm/piksel; tahmini belirsizlik yaklasik +-' + (p.mmPx * 1.5).toFixed(2) + ' mm (lens bozulmasi ve masa egriligi haric)</div>';
+    });
+  } else if (sonuc[1]) {
+    const x = sonuc[1].nesne.uzun * sonuc[1].olcek, y = sonuc[1].nesne.kisa * sonuc[1].olcek;
+    xy.push([x, y]);
+    html += '<div class="sonuc">X = ' + x.toFixed(2) + ' mm</div><div class="sonuc">Y = ' + y.toFixed(2) + ' mm</div>';
+    html += '<div class="mut">Foto 1 cozunurluk: ' + sonuc[1].olcek.toFixed(3) + ' mm/piksel; tahmini belirsizlik yaklasik +-' + (sonuc[1].olcek * 1.5).toFixed(2) + ' mm (kamera dik degilse daha fazla)</div>';
+  }
+  if (xy.length && sonuc[2]) {
+    const z = sonuc[2].nesne.bh * sonuc[2].olcek, genislik = sonuc[2].nesne.bw * sonuc[2].olcek;
+    html += '<div class="sonuc">Z = ' + z.toFixed(2) + ' mm</div>';
+    html += '<div class="mut">Foto 2 cozunurluk: ' + sonuc[2].olcek.toFixed(3) + ' mm/piksel; tahmini belirsizlik yaklasik +-' + (sonuc[2].olcek * 1.5).toFixed(2) + ' mm</div>';
+    const fark = Math.min(...xy.flat().map(v => Math.abs(genislik - v)));
+    html += '<div class="mut">Yan fotodaki genislik: ' + genislik.toFixed(2) + ' mm (ustten olculenle en yakin fark ' + fark.toFixed(2) + ' mm)</div>';
+    if (fark > 0.15) uyarilar.push('Iki fotodaki ortak olcu 0,15 mm\'den fazla farkli: kamera dik degil ya da referans nesne farkli yukseklikte olabilir.');
+  }  for (const u of uyarilar) html += '<div class="uyari">' + u + '</div>';
+  s.innerHTML = html;
+};
+</script>
+</body>
+</html>
+
+
+
+
